@@ -1,16 +1,14 @@
 {
-"name": "hello-stremio",
-"version": "1.0.0",
-"main": "index.js",
-"type": "commonjs",
-"scripts": {
-"start": "node index.js",
-"dev": "nodemon index.js"
-},
-"dependencies": {
-"stremio-addon-sdk": "^1.5.0"
-},
-"devDependencies": {
-"nodemon": "^3.0.0"
-}
+  "name": "dattebayo-stremio-addon",
+  "version": "1.2.0",
+  "private": true,
+  "main": "index.js",
+  "engines": { "node": ">=18" },
+  "type": "commonjs",
+  "dependencies": {
+    "stremio-addon-sdk": "^1.6.5"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
 }

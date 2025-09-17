@@ -60,7 +60,7 @@ async function searchAniList({ search, perPage = 20, page = 1 }) {
   const query = `
     query ($search: String!, $perPage: Int, $page: Int) {
       Page(page: $page, perPage: $perPage) {
-        media(search: $search, type: ANIME, format_not_in: [MOVIE]) {
+        media(search: $search, type: ANIME) {
           id
           title { romaji english native }
           format
