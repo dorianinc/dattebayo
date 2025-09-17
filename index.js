@@ -8,13 +8,17 @@ const manifest = {
   description:
     "Dattebayo pulls anime catalogs directly from AniList, including Trending Now and Popular This Season lists, with search and meta info.",
   resources: ["catalog", "meta"],
-  types: ["anime"],
+  types: ["movie", "series"],               // ← use Stremio's native types
   idPrefixes: ["anilist"],
-  logo: "https://i.ibb.co/xqzS72WY/dattebayo-logo.png", // <-- working direct link
+  logo: "https://i.ibb.co/xqzS72WY/dattebayo-logo.png",
   catalogs: [
-    { type: "anime", id: "anilist-trending",       name: "Trending Now (AniList)",        extra: [{ name: "skip" }] },
-    { type: "anime", id: "anilist-popular-season", name: "Popular This Season (AniList)", extra: [{ name: "skip" }] },
-    { type: "anime", id: "anilist-search",         name: "Search AniList",                extra: [{ name: "search", isRequired: true }, { name: "skip" }] }
+    // Series-only lists
+    { type: "series", id: "anilist-trending",       name: "Trending Now",        extra: [{ name: "skip" }] },
+    { type: "series", id: "anilist-popular-season", name: "Popular This Season", extra: [{ name: "skip" }] },
+
+    // Hidden global search (one per type so Stremio can route correctly)
+    { type: "series", id: "anilist-search-series",  name: "Search AniList",       extra: [{ name: "search", isRequired: true }, { name: "skip" }] },
+    { type: "movie",  id: "anilist-search-movie",   name: "Search AniList",       extra: [{ name: "search", isRequired: true }, { name: "skip" }] }
   ]
 };
 
@@ -72,6 +76,7 @@ async function searchAniList({ search, perPage = 20, page = 1 }) {
       }
     }`;
   const { data } = await gql(query, { search, perPage, page });
+  console.log("🖥️ ~ data: ", data.Page.media)
   return data.Page.media || [];
 }
 
@@ -150,21 +155,26 @@ function titlePick(t) {
   return t?.english || t?.romaji || t?.native || "Untitled";
 }
 
+function stremioTypeFromFormat(format) {
+  return format === "MOVIE" ? "movie" : "series";
+}
+
 function mapAniListToMetaLite(m) {
   return {
     id: `anilist:${m.id}`,
-    type: "anime",
+    type: stremioTypeFromFormat(m.format),   // ← per-item type
     name: titlePick(m.title),
     poster: m.coverImage?.large,
     posterShape: "regular",
-    year: m.seasonYear,
+    year: m.seasonYear
   };
 }
 
 function mapAniListToMetaFull(m) {
+  const type = stremioTypeFromFormat(m.format);
   const meta = {
     id: `anilist:${m.id}`,
-    type: "anime",
+    type,                                     // ← per-item type
     name: titlePick(m.title),
     description: m.description,
     poster: m.coverImage?.extraLarge || m.coverImage?.large,
@@ -172,18 +182,23 @@ function mapAniListToMetaFull(m) {
     genres: m.genres,
     imdbRating: m.averageScore ? (m.averageScore / 10).toFixed(1) : undefined,
     year: m.seasonYear,
-    website: m.siteUrl,
+    website: m.siteUrl
   };
-  const epCount = Number.isFinite(m.episodes) && m.episodes > 0 ? m.episodes : 12;
-  meta.videos = Array.from({ length: epCount }, (_, i) => {
-    const ep = i + 1;
-    return {
-      id: `anilist:${m.id}:1:${ep}`,
-      season: 1,
-      episode: ep,
-      title: `S1E${ep}`,
-    };
-  });
+
+  // Only attach episode list for series
+  if (type === "series") {
+    const epCount = Number.isFinite(m.episodes) && m.episodes > 0 ? m.episodes : 12;
+    meta.videos = Array.from({ length: epCount }, (_, i) => {
+      const ep = i + 1;
+      return {
+        id: `anilist:${m.id}:1:${ep}`,
+        season: 1,
+        episode: ep,
+        title: `S1E${ep}`
+      };
+    });
+  }
+
   return meta;
 }
 
@@ -200,7 +215,7 @@ function setCache(key, val, ms = 60_000) {
 }
 
 // ---------------- Catalog Handler ----------------
-builder.defineCatalogHandler(async ({ id, extra }) => {
+builder.defineCatalogHandler(async ({ type, id, extra }) => {
   const skip = Number(extra?.skip || 0);
   const perPage = 50;
   const page = pageFromSkip(skip, perPage);
@@ -209,7 +224,7 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
     const cacheKey = `trending:${page}`;
     const cached = getCache(cacheKey);
     if (cached) return { metas: cached };
-    const results = await getTrendingSeries({ perPage, page });
+    const results = await getTrendingSeries({ perPage, page });        // already excludes MOVIE
     const metas = results.map(mapAniListToMetaLite);
     setCache(cacheKey, metas, 60_000);
     return { metas };
@@ -226,20 +241,32 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
     return { metas };
   }
 
-  if (id === "anilist-search") {
-    const query = ((extra && (extra.search || extra.searchText)) || "").trim();
-    if (!query) return { metas: [] };
-    const cacheKey = `search:${query}:page=${page}`;
+  // Unified AniList search results, then filter by the catalog's type
+  if (id === "anilist-search-series" || id === "anilist-search-movie") {
+    const q = ((extra && (extra.search || extra.searchText)) || "").trim();
+    if (!q) return { metas: [] };
+
+    const cacheKey = `search:${q}:page=${page}`;
     const cached = getCache(cacheKey);
-    if (cached) return { metas: cached };
-    const results = await searchAniList({ search: query, perPage, page });
-    const metas = results.map(mapAniListToMetaLite);
-    setCache(cacheKey, metas, 30_000);
+    let results;
+    if (cached) {
+      results = cached;
+    } else {
+      results = await searchAniList({ search: q, perPage, page });     // do NOT restrict by format
+      setCache(cacheKey, results, 30_000);
+    }
+
+    // Map then filter to the requested type so Stremio routes correctly
+    const metas = results
+      .map(mapAniListToMetaLite)
+      .filter(m => m.type === (id === "anilist-search-movie" ? "movie" : "series"));
+
     return { metas };
   }
 
   return { metas: [] };
 });
+
 
 // ---------------- Meta Handler ----------------
 builder.defineMetaHandler(async ({ id }) => {
