@@ -1,0 +1,16 @@
+{
+"name": "hello-stremio",
+"version": "1.0.0",
+"main": "index.js",
+"type": "commonjs",
+"scripts": {
+"start": "node index.js",
+"dev": "nodemon index.js"
+},
+"dependencies": {
+"stremio-addon-sdk": "^1.5.0"
+},
+"devDependencies": {
+"nodemon": "^3.0.0"
+}
+}
